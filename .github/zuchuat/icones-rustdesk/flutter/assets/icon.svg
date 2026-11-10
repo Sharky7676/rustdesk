@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Zuchuat IT &amp; Cyber – Signal</title>
+  <defs>
+    <linearGradient id="faisceau" x1="330" y1="652" x2="690" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.6" stop-color="#F0FDFF"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+  <!-- Fond bleu nuit -->
+  <rect x="0" y="0" width="1024" height="1024" rx="200" ry="200" fill="#071521"/>
+  <!-- Bouclier à contour cyan -->
+  <path d="M512 92 L846 206 L846 494 C846 716 704 858 512 936 C320 858 178 716 178 494 L178 206 Z"
+        fill="#0B2233" stroke="#22D3EE" stroke-width="44" stroke-linejoin="round"/>
+  <!-- Halo de balayage radar -->
+  <path d="M330 652 L726.8 499.7 A425 425 0 0 0 573.8 303.9 Z" fill="#22D3EE" fill-opacity="0.14"/>
+  <!-- Z : barres du haut et du bas -->
+  <rect x="322" y="322" width="380" height="72" rx="10" fill="#FFFFFF"/>
+  <rect x="322" y="618" width="380" height="72" rx="10" fill="#FFFFFF"/>
+  <!-- Z : diagonale transformée en faisceau de radar -->
+  <path d="M330 652 L701.7 446.0 A425 425 0 0 0 619.8 341.2 Z" fill="url(#faisceau)"/>
+  <!-- Ondes radar traversant le faisceau -->
+  <path d="M535.5 538.1 A235 235 0 0 0 490.3 480.1" fill="none" stroke="#071521" stroke-width="12" stroke-linecap="round"/>
+  <path d="M627.4 487.2 A340 340 0 0 0 561.9 403.3" fill="none" stroke="#071521" stroke-width="12" stroke-linecap="round"/>
+  <!-- Écho radar -->
+  <circle cx="770" cy="262" r="24" fill="#22D3EE"/>
+</svg>

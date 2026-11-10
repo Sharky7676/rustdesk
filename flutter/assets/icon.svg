@@ -1,1 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" viewBox="66.993 897.484 26 26"><linearGradient id="a" x1=".148" x2=".845" y1=".851" y2=".154" gradientTransform="matrix(26.301 0 0 26.331 90.674 911.757)" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#0071ff"/><stop offset="1" stop-color="#00bfe1"/></linearGradient><defs><linearGradient xlink:href="#a" id="b" x1=".148" x2=".845" y1=".851" y2=".154" gradientTransform="matrix(26.00048 0 0 25.99935 66.993 897.485)" gradientUnits="userSpaceOnUse"/></defs><path fill="url(#b)" d="m89.318 903.552-2.135 2.122c-.376.337-.558.879-.347 1.337 1.422 2.976.882 6.524-1.452 8.856-2.335 2.331-5.887 2.87-8.866 1.449-.439-.197-.954-.03-1.292.312l-2.17 2.167a1.154 1.154 0 0 0 .208 1.81 13.005 13.005 0 0 0 15.91-1.912 12.97 12.97 0 0 0 1.956-15.887 1.154 1.154 0 0 0-1.812-.254zm-18.467-2.305a12.969 12.969 0 0 0-2.02 15.885 1.154 1.154 0 0 0 1.812.254l2.124-2.11c.385-.336.572-.884.359-1.348-1.423-2.976-.884-6.524 1.451-8.856 2.334-2.332 5.887-2.871 8.866-1.45.434.194.942.033 1.281-.3l2.182-2.18a1.152 1.152 0 0 0-.208-1.81 13.009 13.009 0 0 0-15.893 1.973z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Zuchuat IT &amp; Cyber – Signal</title>
+  <defs>
+    <linearGradient id="faisceau" x1="330" y1="652" x2="690" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.6" stop-color="#F0FDFF"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+  <!-- Fond bleu nuit -->
+  <rect x="0" y="0" width="1024" height="1024" rx="200" ry="200" fill="#071521"/>
+  <!-- Bouclier à contour cyan -->
+  <path d="M512 92 L846 206 L846 494 C846 716 704 858 512 936 C320 858 178 716 178 494 L178 206 Z"
+        fill="#0B2233" stroke="#22D3EE" stroke-width="44" stroke-linejoin="round"/>
+  <!-- Halo de balayage radar -->
+  <path d="M330 652 L726.8 499.7 A425 425 0 0 0 573.8 303.9 Z" fill="#22D3EE" fill-opacity="0.14"/>
+  <!-- Z : barres du haut et du bas -->
+  <rect x="322" y="322" width="380" height="72" rx="10" fill="#FFFFFF"/>
+  <rect x="322" y="618" width="380" height="72" rx="10" fill="#FFFFFF"/>
+  <!-- Z : diagonale transformée en faisceau de radar -->
+  <path d="M330 652 L701.7 446.0 A425 425 0 0 0 619.8 341.2 Z" fill="url(#faisceau)"/>
+  <!-- Ondes radar traversant le faisceau -->
+  <path d="M535.5 538.1 A235 235 0 0 0 490.3 480.1" fill="none" stroke="#071521" stroke-width="12" stroke-linecap="round"/>
+  <path d="M627.4 487.2 A340 340 0 0 0 561.9 403.3" fill="none" stroke="#071521" stroke-width="12" stroke-linecap="round"/>
+  <!-- Écho radar -->
+  <circle cx="770" cy="262" r="24" fill="#22D3EE"/>
+</svg>

@@ -1,0 +1,489 @@
+# Zuchuat IT & Cyber - workflow dérivé de .github/workflows/flutter-build.yml
+# (rustdesk/rustdesk, commit 95cca3f), réduit aux clients Windows x64 et macOS
+# (Intel + Apple Silicon), avec l'étape de personnalisation (branding).
+#
+# Serveurs : par défaut, les serveurs PUBLICS de RustDesk (aucun secret nécessaire).
+# Les secrets RENDEZVOUS_SERVER et RS_PUB_KEY sont facultatifs : s'ils existent,
+# le client est figé sur ce serveur auto-hébergé ; s'ils sont vides, rien n'est modifié.
+#
+# Lancement : tout « push » sur la branche zuchuat-build, ou onglet Actions >
+# « Zuchuat IT & Cyber - compilation des clients » > Run workflow.
+#
+# Résultat : ZuchuatRemote-<version>-x86_64.exe, ZuchuatRemote-<version>-x86_64.dmg et
+# ZuchuatRemote-<version>-aarch64.dmg, en artefacts du run ET dans une release GitHub
+# publique nommée zuchuat-<version>-<AAAAMMJJ>-<n° du run>.
+name: Zuchuat IT & Cyber - compilation des clients
+
+on:
+  push:
+    branches:
+      - zuchuat-build
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zuchuat-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SCITER_RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503
+  RUST_VERSION: "1.75"
+  MAC_RUST_VERSION: "1.81" # 1.81 est requis pour macOS (https://github.com/yury/cidre)
+  LLVM_VERSION: "15.0.6"
+  FLUTTER_VERSION: "3.24.5"
+  # macOS arm64 uniquement : le moteur 3.24.5 plante (https://github.com/rustdesk/rustdesk/issues/16817).
+  FLUTTER_MACOS_ARM_VERSION: "3.44.9"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # vcpkg version: 2026.07.29 (identique à flutter-build.yml)
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VCPKG_CMAKE_VERSION: "4.3.0"
+
+jobs:
+  prepare:
+    name: Préparation (version et nom de la release)
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4
+        with:
+          persist-credentials: false
+
+      - name: Version et nom de la release
+        id: meta
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([0-9][0-9.]*\)".*/\1/p' Cargo.toml | head -n 1)"
+          if [ -z "$version" ]; then
+            echo "::error::Version introuvable dans Cargo.toml"
+            exit 1
+          fi
+          date="$(TZ=Europe/Zurich date +%Y%m%d)"
+          tag="zuchuat-${version}-${date}-${GITHUB_RUN_NUMBER}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Version : ${version} / release : ${tag}"
+
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+
+  build-RustDeskTempTopMostWindow:
+    uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
+    with:
+      upload-artifact: true
+      target: windows-2022
+      configuration: Release
+      platform: x64
+      target_version: Windows10
+
+  build-for-windows-flutter:
+    name: Windows x86_64
+    needs: [prepare, build-RustDeskTempTopMostWindow, generate-bridge]
+    runs-on: windows-2022
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TARGET: x86_64-pc-windows-msvc
+      VCPKG_TRIPLET: x64-windows-static
+    steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410   # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Branding Zuchuat IT & Cyber
+        shell: bash
+        env:
+          ZR_RENDEZVOUS_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
+          ZR_RS_PUB_KEY: ${{ secrets.RS_PUB_KEY }}
+          ZR_APP_NAME: ${{ vars.ZR_APP_NAME }}
+          ZR_CONN_TYPE: ${{ vars.ZR_CONN_TYPE }}
+          ZR_APPROVE_MODE: ${{ vars.ZR_APPROVE_MODE || 'click' }}
+        run: python3 .github/zuchuat/zuchuat_branding.py
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0   # v2.0.9
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install flutter
+        uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225    # v2.12.0
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          architecture: x64
+
+      # https://github.com/flutter/flutter/issues/155685
+      - name: Replace engine with rustdesk custom flutter engine
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          mv -Force windows-x64-release/*  C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+
+      - name: Patch flutter
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter)))
+          cd $(dirname $(dirname $(which flutter)))
+          if [[ "3.24.5" == ${{env.FLUTTER_VERSION}} ]]; then
+            git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9   # v1
+        with:
+          toolchain: ${{ env.SCITER_RUST_VERSION }}
+          targets: ${{ env.TARGET }}
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32   # v2
+        with:
+          prefix-key: zuchuat-windows-2022
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2   # v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: ${{ env.VCPKG_TRIPLET }}
+        shell: bash
+        run: |
+          if ! $VCPKG_ROOT/vcpkg \
+            install \
+            --triplet "${VCPKG_TRIPLET}" \
+            --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
+              echo "$_1:"
+              echo "======"
+              cat "$_1"
+              echo "======"
+              echo ""
+            done
+            exit 1
+          fi
+          head -n 100 "${VCPKG_ROOT}/buildtrees/ffmpeg/build-${VCPKG_TRIPLET}-rel-out.log" || true
+
+      - name: Build rustdesk
+        run: |
+          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+          mv ./flutter/build/windows/x64/runner/Release ./rustdesk
+
+          # Download usbmmidd_v2.zip and extract it to ./rustdesk
+          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
+          Expand-Archive usbmmidd_v2.zip -DestinationPath .
+          Remove-Item -Path usbmmidd_v2\Win32 -Recurse
+          Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat"
+          mv -Force .\usbmmidd_v2 ./rustdesk
+
+          # Download printer driver files and extract them to ./rustdesk
+          try {
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/rustdesk_printer_driver_v4-1.4.zip -OutFile rustdesk_printer_driver_v4-1.4.zip
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/printer_driver_adapter.zip -OutFile printer_driver_adapter.zip
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/sha256sums -OutFile sha256sums
+            $checksum_driver = (Select-String -Path .\sha256sums -Pattern '^([a-fA-F0-9]{64}) \*rustdesk_printer_driver_v4-1.4\.zip$').Matches.Groups[1].Value
+            $downloadsum_driver = Get-FileHash -Path rustdesk_printer_driver_v4-1.4.zip -Algorithm SHA256
+            $checksum_adapter = (Select-String -Path .\sha256sums -Pattern '^([a-fA-F0-9]{64}) \*printer_driver_adapter\.zip$').Matches.Groups[1].Value
+            $downloadsum_adapter = Get-FileHash -Path printer_driver_adapter.zip -Algorithm SHA256
+            if ($checksum_driver -eq $downloadsum_driver.Hash -and $checksum_adapter -eq $downloadsum_adapter.Hash) {
+                Write-Output "rustdesk_printer_driver_v4-1.4, checksums match, extract the file."
+                Expand-Archive rustdesk_printer_driver_v4-1.4.zip -DestinationPath .
+                mkdir ./rustdesk/drivers
+                mv -Force .\rustdesk_printer_driver_v4-1.4 ./rustdesk/drivers/RustDeskPrinterDriver
+                Expand-Archive printer_driver_adapter.zip -DestinationPath .
+                mv -Force .\printer_driver_adapter.dll ./rustdesk
+            } else {
+                Write-Output "Printer driver checksums do not match, ignore the files."
+            }
+          } catch {
+              Write-Host "Ignore the printer driver error."
+          }
+
+      - name: find Runner.res
+        # Runner.res (compilé depuis Runner.rc) contient la version et les métadonnées
+        continue-on-error: true
+        shell: bash
+        run: |
+          runner_res=$(find . -name "Runner.res");
+          if [ "$runner_res" == "" ]; then
+            echo "Runner.res: not found";
+          else
+            echo "Runner.res: $runner_res";
+            cp $runner_res ./libs/portable/Runner.res;
+            ls -l ./libs/portable/Runner.res;
+          fi
+
+      - name: Download RustDeskTempTopMostWindow artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: topmostwindow-artifacts-x64
+          path: "./rustdesk"
+
+      - name: Build self-extracted executable
+        shell: bash
+        run: |
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          popd
+          mkdir -p ./dist
+          mv ./target/release/rustdesk-portable-packer.exe "./dist/${ZR_APP_NAME}-${VERSION}-x86_64.exe"
+          ls -l ./dist
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: zuchuat-windows-x86_64
+          path: ./dist/*.exe
+          if-no-files-found: error
+
+  build-for-macOS:
+    name: macOS ${{ matrix.job.arch }}
+    needs: [prepare, generate-bridge]
+    runs-on: ${{ matrix.job.os }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - {target: x86_64-apple-darwin, os: macos-15-intel, extra-build-args: "", arch: x86_64}
+          - {target: aarch64-apple-darwin, os: macos-15, extra-build-args: "--screencapturekit", arch: aarch64}
+    steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410   # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Branding Zuchuat IT & Cyber
+        shell: bash
+        env:
+          ZR_RENDEZVOUS_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
+          ZR_RS_PUB_KEY: ${{ secrets.RS_PUB_KEY }}
+          ZR_APP_NAME: ${{ vars.ZR_APP_NAME }}
+          ZR_CONN_TYPE: ${{ vars.ZR_CONN_TYPE }}
+          ZR_APPROVE_MODE: ${{ vars.ZR_APPROVE_MODE || 'click' }}
+        run: python3 .github/zuchuat/zuchuat_branding.py
+
+      - name: Install build runtime
+        run: |
+          brew install llvm create-dmg
+          if command -v pkg-config &>/dev/null; then
+              echo "pkg-config is already installed"
+          else
+              brew install pkg-config
+          fi
+
+      - name: Install NASM
+        run: |
+          # NASM 2.16.x (NASM 3.x est incompatible avec aom et consorts)
+          wget https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/macosx/nasm-2.16.03-macosx.zip
+          unzip nasm-2.16.03-macosx.zip
+          sudo cp nasm-2.16.03/nasm /usr/local/bin/nasm
+          nasm --version
+
+      - name: Install flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2   # v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ matrix.job.arch == 'aarch64' && env.FLUTTER_MACOS_ARM_VERSION || env.FLUTTER_VERSION }}
+
+      - name: Keep CocoaPods for Flutter 3.44 (arm64)
+        if: ${{ matrix.job.arch == 'aarch64' }}
+        run: flutter config --no-enable-swift-package-manager
+
+      - name: Patch flutter
+        if: ${{ matrix.job.arch == 'x86_64' }}
+        run: |
+          cd $(dirname $(dirname $(which flutter)))
+          if [[ "3.24.5" == ${{env.FLUTTER_VERSION}} ]]; then
+            git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+          fi
+
+      - name: Workaround for flutter issue
+        shell: bash
+        run: |
+          cd "$(dirname "$(which flutter)")"
+          # https://github.com/flutter/flutter/issues/133533
+          sed -i -e 's/_setFramesEnabledState(false);/\/\/_setFramesEnabledState(false);/g' ../packages/flutter/lib/src/scheduler/binding.dart
+          grep -n '_setFramesEnabledState(false);' ../packages/flutter/lib/src/scheduler/binding.dart
+
+      - name: Patch RustDesk sources for Flutter 3.44 (arm64)
+        if: ${{ matrix.job.arch == 'aarch64' }}
+        shell: bash
+        run: |
+          brew install gnu-sed
+          export PATH="$(brew --prefix gnu-sed)/libexec/gnubin:$PATH"
+          bash .github/patches/apply_flutter_3.44_source_patches.sh
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9   # v1
+        with:
+          toolchain: ${{ env.MAC_RUST_VERSION }}
+          targets: ${{ matrix.job.target }}
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32   # v2
+        with:
+          prefix-key: zuchuat-${{ matrix.job.os }}
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          # arm64 compile avec Flutter 3.44 : il lui faut le bridge généré avec la même version.
+          name: ${{ matrix.job.arch == 'aarch64' && 'bridge-artifact-flutter-3.44' || 'bridge-artifact' }}
+          path: ./
+
+      - name: Setup vcpkg with Github Actions binary cache
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2   # v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        run: |
+          if ! $VCPKG_ROOT/vcpkg \
+            install \
+            --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
+              echo "$_1:"
+              echo "======"
+              cat "$_1"
+              echo "======"
+              echo ""
+            done
+            exit 1
+          fi
+
+      - name: Build rustdesk
+        run: |
+          if [ "${{ matrix.job.target }}" = "aarch64-apple-darwin" ]; then
+            MIN_MACOS_VERSION="12.3"
+            sed -i -e "s/MACOSX_DEPLOYMENT_TARGET\=[0-9]*.[0-9]*/MACOSX_DEPLOYMENT_TARGET=${MIN_MACOS_VERSION}/" build.py
+            sed -i -e "s/platform :osx, '.*'/platform :osx, '${MIN_MACOS_VERSION}'/" flutter/macos/Podfile
+            sed -i -e "s/osx_minimum_system_version = \"[0-9]*.[0-9]*\"/osx_minimum_system_version = \"${MIN_MACOS_VERSION}\"/" Cargo.toml
+            sed -i -e "s/MACOSX_DEPLOYMENT_TARGET = [0-9]*.[0-9]*;/MACOSX_DEPLOYMENT_TARGET = ${MIN_MACOS_VERSION};/" flutter/macos/Runner.xcodeproj/project.pbxproj
+            echo "MACOSX_DEPLOYMENT_TARGET=${MIN_MACOS_VERSION}" >> "$GITHUB_ENV"
+          fi
+          ./build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
+
+      - name: Signature ad hoc (gratuite) de l application
+        shell: bash
+        run: |
+          APP="./flutter/build/macos/Build/Products/Release/${ZR_MAC_APP}"
+          test -d "$APP"
+          # build.py ajoute le binaire « service » après la compilation Xcode : on rescelle le bundle.
+          if [ -f "$APP/Contents/MacOS/service" ]; then codesign --force --sign - "$APP/Contents/MacOS/service"; fi
+          codesign --force --deep --sign - --entitlements ./flutter/macos/Runner/Release.entitlements "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Create dmg
+        shell: bash
+        run: |
+          CREATE_DMG="$(command -v create-dmg)"
+          CREATE_DMG="$(readlink -f "$CREATE_DMG")"
+          sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
+          mkdir -p dist
+          create-dmg --volname "Zuchuat IT & Cyber" \
+            --icon "${ZR_MAC_APP}" 200 190 --hide-extension "${ZR_MAC_APP}" \
+            --window-size 800 400 --app-drop-link 600 185 \
+            "dist/${ZR_APP_NAME}-${VERSION}-${{ matrix.job.arch }}.dmg" \
+            "./flutter/build/macos/Build/Products/Release/${ZR_MAC_APP}"
+          ls -l dist
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: zuchuat-macos-${{ matrix.job.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: Publication de la release GitHub
+    needs: [prepare, build-for-windows-flutter, build-for-macOS]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - name: Télécharger les fichiers compilés
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          pattern: zuchuat-*
+          path: dist
+          merge-multiple: true
+
+      - name: Vérifier et calculer les empreintes SHA-256
+        shell: bash
+        run: |
+          cd dist
+          ls -l
+          for f in "ZuchuatRemote-${VERSION}-x86_64.exe" "ZuchuatRemote-${VERSION}-x86_64.dmg" "ZuchuatRemote-${VERSION}-aarch64.dmg"; do
+            if [ ! -f "$f" ]; then
+              echo "::warning::Fichier attendu absent : $f (nom technique personnalisé via ZR_APP_NAME ?)"
+            fi
+          done
+          sha256sum -- *.exe *.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Créer la release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Clients d'assistance à distance **Zuchuat IT & Cyber** (basés sur RustDesk ${VERSION}, licence AGPL-3.0)."
+            echo
+            echo "- Windows 10/11 (64 bits) : fichier \`.exe\` x86_64"
+            echo "- Mac Apple Silicon (M1 à M5) : fichier \`.dmg\` aarch64"
+            echo "- Mac Intel : fichier \`.dmg\` x86_64"
+            echo
+            echo "Serveurs : serveurs publics RustDesk, sauf si les secrets RENDEZVOUS_SERVER / RS_PUB_KEY sont définis."
+            echo "Fichiers non signés par Apple/Microsoft : voir la notice du kit pour la première ouverture."
+            echo
+            echo "Code source : commit ${GITHUB_SHA} de la branche ${GITHUB_REF_NAME}."
+            echo
+            echo "Empreintes SHA-256 :"
+            echo '```'
+            cat dist/SHA256SUMS.txt
+            echo '```'
+          } > notes.md
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Zuchuat IT & Cyber ${VERSION} ($(TZ=Europe/Zurich date +%d.%m.%Y))" \
+            --notes-file notes.md \
+            --latest
